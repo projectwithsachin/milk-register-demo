@@ -1,73 +1,44 @@
 import streamlit as st
-import pytesseract
-from PIL import Image
-import cv2
-import numpy as np
-import re
-import pandas as pd
+from utils import process_image, generate_bill_pdf, generate_csv
+from io import BytesIO
 
-# ---------- Image Processing Function ----------
-def process_image(uploaded_file):
-    # Read image
-    image = Image.open(uploaded_file).convert("RGB")
-    img_array = np.array(image)
+st.set_page_config(page_title="Milk Register", layout="centered")
 
-    # Convert to grayscale
-    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
+st.title("🥛 Milk Register - Bacchas Milk Supplier, Sector 168, Noida")
 
-    # Apply thresholding
-    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
-
-    # OCR extraction
-    raw_text = pytesseract.image_to_string(thresh)
-
-    # Clean OCR text for easier matching
-    clean_text = (
-        raw_text.replace(" ", "")
-        .replace("|", "")
-        .replace("I", "1")
-        .replace("l", "1")
-        .lower()
-    )
-
-    # Extract milk entries (911 = 1.5L, 9 = 1L, x = no milk)
-    entries = re.findall(r"(911|9|x)", clean_text)
-
-    total_litres = 0.0
-    for e in entries:
-        if e == "911":
-            total_litres += 1.5
-        elif e == "9":
-            total_litres += 1.0
-        # 'x' means skip
-
-    return raw_text, entries, total_litres
-
-
-# ---------- Streamlit UI ----------
-st.set_page_config(page_title="Milk Register Demo", layout="wide")
-
-st.title("🥛 Milk Register OCR Demo")
-st.write("Upload a bill/register image and extract milk entries automatically.")
-
-uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
+uploaded_file = st.file_uploader("📤 Upload Milk Bill Image", type=["jpg", "jpeg", "png"])
 
 if uploaded_file is not None:
-    # Show uploaded image
-    st.image(uploaded_file, caption="Uploaded Image", use_container_width=True)
+    st.image(uploaded_file, caption="Uploaded Bill", use_container_width=True)
 
-    # Process image
-    raw_text, entries, total_litres = process_image(uploaded_file)
+    # OCR Processing
+    with st.spinner("🔍 Processing image..."):
+        ocr_text, milk_entries, total_milk, grand_total = process_image(uploaded_file)
 
-    # Display OCR result
     st.subheader("📜 Extracted Raw OCR Text")
-    st.text(raw_text)
+    st.text(ocr_text)
 
-    if entries:
-        st.subheader("✅ Milk Entries Detected")
-        df = pd.DataFrame({"Entry": entries})
-        st.dataframe(df, use_container_width=True)
+    if len(milk_entries) > 0:
+        st.success("✅ Milk Entries Detected")
+        st.write(f"**Total Milk:** {total_milk} litres")
+        st.write(f"**Grand Total:** ₹{grand_total}")
 
-        st.write(f"**Total Milk: {total_litres} litres**")
+        # Generate CSV
+        csv_data = generate_csv(milk_entries, total_milk, grand_total)
+        st.download_button(
+            "⬇️ Download CSV",
+            data=csv_data,
+            file_name="milk_register.csv",
+            mime="text/csv"
+        )
+
+        # Generate PDF
+        pdf_bytes = generate_bill_pdf(milk_entries, total_milk, grand_total)
+        st.download_button(
+            "⬇️ Download PDF Bill",
+            data=pdf_bytes,
+            file_name="milk_bill.pdf",
+            mime="application/pdf"
+        )
     else:
         st.warning("⚠️ No valid milk entries detected. Please check image quality.")
