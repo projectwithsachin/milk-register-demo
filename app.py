@@ -95,7 +95,7 @@ st.title("📒 Milk Register Extractor")
 uploaded_file = st.file_uploader("Upload milk register image", type=["png", "jpg", "jpeg"])
 
 if uploaded_file:
-    st.image(uploaded_file, caption="Uploaded Register", use_column_width=True)
+    st.image(uploaded_file, caption="Uploaded Register", use_container_width=True)
 
     # Process OCR
     text = process_image(uploaded_file)
