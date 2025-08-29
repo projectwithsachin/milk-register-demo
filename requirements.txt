@@ -1,7 +1,7 @@
 streamlit
+opencv-python-headless
 pytesseract
-Pillow
+pillow
+numpy
 pandas
-openpyxl
 reportlab
-opencv-python
