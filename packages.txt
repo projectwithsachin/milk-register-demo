@@ -1,4 +1,3 @@
-libtesseract-dev
-tesseract-ocr
-tesseract-ocr-hin
 libgl1
+libglib2.0-0
+tesseract-ocr
