@@ -5,129 +5,69 @@ import cv2
 import numpy as np
 import re
 import pandas as pd
-from io import BytesIO
-from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer
-from reportlab.lib.styles import getSampleStyleSheet
 
-# -------------------------------
-# OCR Preprocessing Function
-# -------------------------------
+# ---------- Image Processing Function ----------
 def process_image(uploaded_file):
-    image = Image.open(uploaded_file).convert("L")  # grayscale
+    # Read image
+    image = Image.open(uploaded_file).convert("RGB")
     img_array = np.array(image)
 
-    # Thresholding for black & white
-    _, thresh = cv2.threshold(img_array, 150, 255, cv2.THRESH_BINARY)
+    # Convert to grayscale
+    gray = cv2.cvtColor(img_array, cv2.COLOR_RGB2GRAY)
 
-    # Noise removal
-    kernel = np.ones((1, 1), np.uint8)
-    processed = cv2.morphologyEx(thresh, cv2.MORPH_OPEN, kernel)
+    # Apply thresholding
+    _, thresh = cv2.threshold(gray, 150, 255, cv2.THRESH_BINARY)
 
-    # OCR
-    text = pytesseract.image_to_string(processed, config="--psm 6")
+    # OCR extraction
+    raw_text = pytesseract.image_to_string(thresh)
 
-    return text
+    # Clean OCR text for easier matching
+    clean_text = (
+        raw_text.replace(" ", "")
+        .replace("|", "")
+        .replace("I", "1")
+        .replace("l", "1")
+        .lower()
+    )
 
+    # Extract milk entries (911 = 1.5L, 9 = 1L, x = no milk)
+    entries = re.findall(r"(911|9|x)", clean_text)
 
-# -------------------------------
-# Parse OCR Text into Milk Data
-# -------------------------------
-def parse_milk_data(text):
-    milk_data = []
-    for line in text.splitlines():
-        line = line.strip()
-        if not line:
-            continue
+    total_litres = 0.0
+    for e in entries:
+        if e == "911":
+            total_litres += 1.5
+        elif e == "9":
+            total_litres += 1.0
+        # 'x' means skip
 
-        # Find entries like 9, 911, X
-        match = re.search(r'(\d{1,3}|X)', line)
-        if match:
-            value = match.group(1)
-            if value == "911":
-                milk_data.append(1.5)
-            elif value == "9":
-                milk_data.append(1.0)
-            elif value.upper() == "X":
-                milk_data.append(0.0)
-
-    return milk_data
+    return raw_text, entries, total_litres
 
 
-# -------------------------------
-# Generate Plain Text PDF Bill
-# -------------------------------
-def generate_pdf(dates, milk_data, rate, extra):
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer)
-    styles = getSampleStyleSheet()
-    story = []
+# ---------- Streamlit UI ----------
+st.set_page_config(page_title="Milk Register Demo", layout="wide")
 
-    story.append(Paragraph("Bacchas Milk Supplier, Sector 168, Noida", styles["Title"]))
-    story.append(Spacer(1, 12))
-    story.append(Paragraph("Customer: ___________________", styles["Normal"]))
-    story.append(Paragraph("Month: ______________________", styles["Normal"]))
-    story.append(Spacer(1, 12))
+st.title("🥛 Milk Register OCR Demo")
+st.write("Upload a bill/register image and extract milk entries automatically.")
 
-    total_milk = sum(milk_data)
-    total_amount = total_milk * rate + extra
+uploaded_file = st.file_uploader("Upload Image", type=["png", "jpg", "jpeg"])
 
-    story.append(Paragraph("Date - Milk (Ltr)", styles["Heading3"]))
-    for d, m in zip(dates, milk_data):
-        story.append(Paragraph(f"{d} - {m}", styles["Normal"]))
+if uploaded_file is not None:
+    # Show uploaded image
+    st.image(uploaded_file, caption="Uploaded Image", use_container_width=True)
 
-    story.append(Spacer(1, 12))
-    story.append(Paragraph(f"Total Milk: {total_milk} Ltr", styles["Normal"]))
-    story.append(Paragraph(f"Rate: ₹{rate} per Ltr", styles["Normal"]))
-    story.append(Paragraph(f"Extras: ₹{extra}", styles["Normal"]))
-    story.append(Paragraph(f"Grand Total: ₹{total_amount}", styles["Heading2"]))
+    # Process image
+    raw_text, entries, total_litres = process_image(uploaded_file)
 
-    doc.build(story)
-    pdf_data = buffer.getvalue()
-    buffer.close()
-    return pdf_data
-
-
-# -------------------------------
-# Streamlit App
-# -------------------------------
-st.title("📒 Milk Register Extractor")
-
-uploaded_file = st.file_uploader("Upload milk register image", type=["png", "jpg", "jpeg"])
-
-if uploaded_file:
-    st.image(uploaded_file, caption="Uploaded Register", use_container_width=True)
-
-    # Process OCR
-    text = process_image(uploaded_file)
+    # Display OCR result
     st.subheader("📜 Extracted Raw OCR Text")
-    st.text(text)
+    st.text(raw_text)
 
-    # Parse milk data
-    milk_data = parse_milk_data(text)
+    if entries:
+        st.subheader("✅ Milk Entries Detected")
+        df = pd.DataFrame({"Entry": entries})
+        st.dataframe(df, use_container_width=True)
 
-    if milk_data:
-        dates = list(range(1, len(milk_data) + 1))
-        df = pd.DataFrame({"Date": dates, "Milk (Ltr)": milk_data})
-        st.subheader("✅ Cleaned Milk Data")
-        st.dataframe(df)
-
-        # Rate & Extras
-        rate = st.number_input("Rate per litre (₹)", value=60)
-        extra = st.number_input("Extra charges (₹)", value=0)
-
-        total_milk = sum(milk_data)
-        total_amount = total_milk * rate + extra
-
-        st.write(f"**Total Milk:** {total_milk} Ltr")
-        st.write(f"**Total Amount:** ₹{total_amount}")
-
-        # Download CSV
-        csv = df.to_csv(index=False).encode("utf-8")
-        st.download_button("⬇️ Download CSV", data=csv, file_name="milk_data.csv", mime="text/csv")
-
-        # Download PDF
-        pdf_data = generate_pdf(dates, milk_data, rate, extra)
-        st.download_button("⬇️ Download PDF Bill", data=pdf_data, file_name="milk_bill.pdf", mime="application/pdf")
-
+        st.write(f"**Total Milk: {total_litres} litres**")
     else:
-        st.error("⚠️ No valid milk entries detected. Please check image quality.")
+        st.warning("⚠️ No valid milk entries detected. Please check image quality.")
